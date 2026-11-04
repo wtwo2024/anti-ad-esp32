@@ -41,7 +41,6 @@
 #include <ArduinoOTA.h>
 #include "lwip/etharp.h"
 #include "lwip/netif.h"
-#include "lwip/dns.h"
 #include "secrets.h"
 #include "dashboard_html.h"
 
@@ -1010,13 +1009,8 @@ static bool fetchBlocklist(String url) {
 
   LOG("[remote] GET %s\n", url.c_str());
 
-  // Ensure public domestic DNS (AliDNS & Tencent) is set in lwIP
+  // Ensure public domestic DNS (AliDNS & Tencent) is configured
   WiFi.setDNS(IPAddress(223, 5, 5, 5), IPAddress(119, 29, 29, 29));
-  ip_addr_t d1, d2;
-  IP_ADDR4(&d1, 223, 5, 5, 5);
-  IP_ADDR4(&d2, 119, 29, 29, 29);
-  dns_setserver(0, &d1);
-  dns_setserver(1, &d2);
 
   // Free Bloom filter to give mbedTLS 128KB extra RAM for HTTPS handshake
   freeBloom();
@@ -1068,6 +1062,7 @@ static bool fetchBlocklist(String url) {
       if (millis() - idle > 15000) break;
       delay(2);
     }
+    yield();
   }
   f.close(); http.end();
   bool ok = commitNewBlocklist();
@@ -1135,11 +1130,6 @@ static bool connectWiFi() {
   }
   if (WiFi.status() == WL_CONNECTED) {
     WiFi.setDNS(IPAddress(223, 5, 5, 5), IPAddress(119, 29, 29, 29));
-    ip_addr_t d1, d2;
-    IP_ADDR4(&d1, 223, 5, 5, 5);
-    IP_ADDR4(&d2, 119, 29, 29, 29);
-    dns_setserver(0, &d1);
-    dns_setserver(1, &d2);
     LOGN("\nWiFi up: " + WiFi.localIP().toString());
     return true;
   }
