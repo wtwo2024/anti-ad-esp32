@@ -41,11 +41,12 @@
 #include <ArduinoOTA.h>
 #include "lwip/etharp.h"
 #include "lwip/netif.h"
+#include "lwip/dns.h"
 #include "secrets.h"
 #include "dashboard_html.h"
 
 // ---- config ----
-static const IPAddress UPSTREAM(9, 9, 9, 9);
+static const IPAddress UPSTREAM(223, 5, 5, 5);
 static const uint16_t DNS_PORT = 53;
 static const uint16_t DHCP_PORT = 67;
 static const char* BLOCKLIST_PATH = "/blocklist.bin";
@@ -988,21 +989,66 @@ static void saveUpdateCfg() {
 static bool fetchBlocklist(String url) {
   url.trim();
   if (!url.length()) { updateStatus = "no url set"; return false; }
+  // Auto-complete or normalize URLs
+  if (url.startsWith("http://")) {
+    url = "https://" + url.substring(7);
+  } else if (!url.startsWith("https://")) {
+    url = "https://" + url;
+  }
+  if (url.indexOf("github.com/") != -1) {
+    url.replace("https://github.com/", "https://cdn.jsdelivr.net/gh/");
+    url.replace("http://github.com/", "https://cdn.jsdelivr.net/gh/");
+  }
+  if (url.indexOf("blocklist.bin") == -1) {
+    if (url.endsWith("/")) url = url.substring(0, url.length() - 1);
+    if (url.indexOf("@") == -1) {
+      url += "@release/blocklist.bin";
+    } else {
+      url += "/blocklist.bin";
+    }
+  }
+
   LOG("[remote] GET %s\n", url.c_str());
+
+  // Ensure public domestic DNS (AliDNS & Tencent) is set in lwIP
+  WiFi.setDNS(IPAddress(223, 5, 5, 5), IPAddress(119, 29, 29, 29));
+  ip_addr_t d1, d2;
+  IP_ADDR4(&d1, 223, 5, 5, 5);
+  IP_ADDR4(&d2, 119, 29, 29, 29);
+  dns_setserver(0, &d1);
+  dns_setserver(1, &d2);
+
+  // Free Bloom filter to give mbedTLS 128KB extra RAM for HTTPS handshake
+  freeBloom();
+
   WiFiClientSecure cs;
-  // CA verification — do NOT call setInsecure(). Arduino-ESP32 uses bundled Mozilla CAs by default.
+  cs.setInsecure(); // Allow HTTPS without bundled root CAs
+  cs.setHandshakeTimeout(30);
   WiFiClient cl;
   HTTPClient http;
-  http.setTimeout(20000);
+  http.setTimeout(25000);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   bool https = url.startsWith("https");
   if (!(https ? http.begin(cs, url) : http.begin(cl, url))) {
-    updateStatus = "begin failed"; return false;
+    updateStatus = "begin failed";
+    reopenBlocklist();
+    return false;
   }
   int code = http.GET();
   if (code != HTTP_CODE_OK) {
-    http.end(); updateStatus = "HTTP " + String(code);
+    http.end();
+    char sslErr[100] = {0};
+    if (https) cs.lastError(sslErr, sizeof(sslErr));
+    updateStatus = "HTTP " + String(code);
+    if (strlen(sslErr) > 0) {
+      updateStatus += " (" + String(sslErr) + ")";
+    } else if (code == -1) {
+      IPAddress testIp;
+      bool dnsOk = Network.hostByName("cdn.jsdelivr.net", testIp);
+      updateStatus += dnsOk ? (" (conn refused, ip=" + testIp.toString() + ")") : (" (dns failed, srv=" + WiFi.dnsIP(0).toString() + ")");
+    }
     LOG("[remote] %s\n", updateStatus.c_str());
+    reopenBlocklist();
     return false;
   }
   beginBlocklistSwap();
@@ -1088,6 +1134,12 @@ static bool connectWiFi() {
     delay(300); Serial.print(".");
   }
   if (WiFi.status() == WL_CONNECTED) {
+    WiFi.setDNS(IPAddress(223, 5, 5, 5), IPAddress(119, 29, 29, 29));
+    ip_addr_t d1, d2;
+    IP_ADDR4(&d1, 223, 5, 5, 5);
+    IP_ADDR4(&d2, 119, 29, 29, 29);
+    dns_setserver(0, &d1);
+    dns_setserver(1, &d2);
     LOGN("\nWiFi up: " + WiFi.localIP().toString());
     return true;
   }
