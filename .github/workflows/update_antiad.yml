@@ -1,0 +1,36 @@
+name: Auto Update anti-AD Blocklist
+
+on:
+  schedule:
+    # 每天北京时间凌晨 04:00 (UTC 20:00) 自动执行
+    - cron: '0 20 * * *'
+  workflow_dispatch: # 支持在 GitHub 页面上随时手动点击“Run workflow”测试
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download anti-AD rules and build blocklist.bin
+        run: |
+          curl -sSL https://anti-ad.net/domains.txt -o anti-ad.txt
+          python3 tools/build_blocklist.py blocklist.bin anti-ad.txt
+
+      - name: Commit and push blocklist.bin to release branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B release
+          git add -f blocklist.bin
+          git commit -m "Auto update anti-AD: $(date +'%Y-%m-%d %H:%M:%S')" || exit 0
+          git push -f origin release

@@ -98,18 +98,24 @@ File blocklist;
 uint32_t numHashes = 0;
 uint32_t hashTableOffset = 0;       // offset in file where sorted hashes begin
 
-uint8_t* bloomFilter = nullptr;     // malloc'd RAM bloom filter
+static const size_t BLOOM_CHUNK_SZ = 65536;
+uint8_t* bloomChunk0 = nullptr;     // chunked RAM bloom filter
+uint8_t* bloomChunk1 = nullptr;
 uint32_t bloomBits = 0;
 uint8_t bloomK = 0;
 
+static inline bool hasBloom() { return (bloomChunk0 != nullptr && bloomBits > 0 && bloomK > 0); }
+
 static bool bloomMayContain(uint64_t h64) {
-  if (!bloomFilter || bloomBits == 0 || bloomK == 0) return true; // fail open -> check flash
+  if (!hasBloom()) return true; // fail open -> check flash
   uint32_t h1 = (uint32_t)(h64 & 0xFFFFFFFF);
   uint32_t h2 = (uint32_t)(h64 >> 32);
   if (h2 == 0) h2 = 0xFFFFFFFF;
   for (uint8_t i = 0; i < bloomK; i++) {
     uint32_t pos = (h1 + i * h2) % bloomBits;
-    if (!(bloomFilter[pos >> 3] & (1 << (pos & 7)))) return false;
+    uint32_t byteIdx = pos >> 3;
+    uint8_t b = (byteIdx < BLOOM_CHUNK_SZ) ? bloomChunk0[byteIdx] : (bloomChunk1 ? bloomChunk1[byteIdx - BLOOM_CHUNK_SZ] : 0);
+    if (!(b & (1 << (pos & 7)))) return false;
   }
   return true;
 }
@@ -697,7 +703,7 @@ static void handleStats() {
   uint32_t up = millis() / 1000;
   char ut[24];
   snprintf(ut, sizeof(ut), "%lud %luh %lum", up/86400, (up%86400)/3600, (up%3600)/60);
-  String bloomStr = bloomFilter ? (String(bloomBits / 8 / 1024) + " KB") : String("off");
+  String bloomStr = hasBloom() ? (String(bloomBits / 8 / 1024) + " KB") : String("off");
 
   String j = "{\"ip\":\"" + WiFi.localIP().toString() + "\",\"blocked\":" + totalBlocked +
              ",\"allowed\":" + totalAllowed + ",\"domains\":" + numHashes +
@@ -847,9 +853,14 @@ static void handleFactoryReset() {
 }
 
 // ---- blocklist swap (shared by upload + remote fetch) ----
-static void loadBloomFromBlocklist(File& f) {
-  if (bloomFilter) { free(bloomFilter); bloomFilter = nullptr; }
+static void freeBloom() {
+  if (bloomChunk0) { free(bloomChunk0); bloomChunk0 = nullptr; }
+  if (bloomChunk1) { free(bloomChunk1); bloomChunk1 = nullptr; }
   bloomBits = 0; bloomK = 0;
+}
+
+static void loadBloomFromBlocklist(File& f) {
+  freeBloom();
   if (!f) return;
   uint8_t hdr[BL_HEADER_SIZE];
   f.seek(0);
@@ -862,14 +873,26 @@ static void loadBloomFromBlocklist(File& f) {
   bloomK = hdr[14];
   if (bloomBits > 0 && bloomK > 0) {
     size_t bloomBytes = (bloomBits + 7) / 8;
-    bloomFilter = (uint8_t*)malloc(bloomBytes);
-    if (bloomFilter) {
-      f.read(bloomFilter, bloomBytes);
-      hashTableOffset = BL_HEADER_SIZE + bloomBytes;
+    hashTableOffset = BL_HEADER_SIZE + bloomBytes;
+    if (bloomBytes <= BLOOM_CHUNK_SZ) {
+      bloomChunk0 = (uint8_t*)malloc(bloomBytes);
+      if (bloomChunk0) {
+        f.read(bloomChunk0, bloomBytes);
+      } else {
+        LOGN("[bl] bloom malloc failed — running without bloom");
+        freeBloom();
+      }
     } else {
-      LOGN("[bl] bloom malloc failed — running without bloom");
-      bloomBits = 0; bloomK = 0;
-      hashTableOffset = BL_HEADER_SIZE;
+      bloomChunk0 = (uint8_t*)malloc(BLOOM_CHUNK_SZ);
+      size_t rem = bloomBytes - BLOOM_CHUNK_SZ;
+      bloomChunk1 = (uint8_t*)malloc(rem);
+      if (bloomChunk0 && bloomChunk1) {
+        f.read(bloomChunk0, BLOOM_CHUNK_SZ);
+        f.read(bloomChunk1, rem);
+      } else {
+        LOGN("[bl] bloom malloc failed — running without bloom");
+        freeBloom();
+      }
     }
   } else {
     hashTableOffset = BL_HEADER_SIZE;
@@ -880,13 +903,12 @@ static void reopenBlocklist() {
   if (blocklist) blocklist.close();
   blocklist = LittleFS.open(BLOCKLIST_PATH, "r");
   loadBloomFromBlocklist(blocklist);
-  if (blocklist) LOG("[bl] %u domains, bloom %u bits k=%u\n", numHashes, bloomBits, bloomK);
+  if (blocklist) LOG("[bl] %lu domains, bloom %lu bits k=%u\n", (unsigned long)numHashes, (unsigned long)bloomBits, bloomK);
 }
 static void beginBlocklistSwap() {
   if (blocklist) blocklist.close();
   numHashes = 0;
-  if (bloomFilter) { free(bloomFilter); bloomFilter = nullptr; }
-  bloomBits = 0; bloomK = 0;
+  freeBloom();
   LittleFS.remove(BLOCKLIST_PATH);
   LittleFS.remove("/blocklist.new");
 }
@@ -1152,6 +1174,7 @@ void setup() {
   loadBanned();
   loadUpdateCfg();
   loadDhcpCfg();
+  LOG("[heap] free:%lu max_alloc:%lu\n", (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMaxAllocHeap());
   reopenBlocklist();
   LOG("[cfg] custom:%d banned:%d auth:%s\n", numCustom, numBanned, authPassword.c_str());
   LOGN("[cfg] dashboard password: " + authPassword);
