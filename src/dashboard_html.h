@@ -42,7 +42,7 @@ details[open] summary{border-bottom:1px solid #30363d}
 <form id=upf style=margin-bottom:6px><input type=file id=blf accept=.bin><button>Upload blocklist</button> <span id=upmsg style=color:#8b949e></span></form>
 <div style="color:#8b949e;font-size:12px;margin-bottom:18px">build <code>blocklist.bin</code> with <code>tools/build_blocklist.py</code>, then upload here &mdash; no USB</div>
 <h2>REMOTE AUTO-UPDATE</h2>
-<div style=margin-bottom:6px><input id=uurl placeholder="https://cdn.jsdelivr.net/gh/user/repo@release/blocklist.bin" style="width:min(100%, 460px)"> every <input id=uiv size=2 value=24>h
+<div style=margin-bottom:6px><input id=uurl placeholder="https://fastly.jsdelivr.net/gh/user/repo@release/blocklist.bin" style="width:min(100%, 460px)"> every <input id=uiv size=2 value=24>h
 <button onclick=saveUpd()>Save</button> <button onclick=fetchNow()>Fetch now</button></div>
 <div style="color:#8b949e;font-size:12px">device pulls a prebuilt <code>blocklist.bin</code> on a schedule. last: <span id=ustat>&mdash;</span></div>
 </div></details>

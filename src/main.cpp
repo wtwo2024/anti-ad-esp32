@@ -995,8 +995,11 @@ static bool fetchBlocklist(String url) {
     url = "https://" + url;
   }
   if (url.indexOf("github.com/") != -1) {
-    url.replace("https://github.com/", "https://cdn.jsdelivr.net/gh/");
-    url.replace("http://github.com/", "https://cdn.jsdelivr.net/gh/");
+    url.replace("https://github.com/", "https://fastly.jsdelivr.net/gh/");
+    url.replace("http://github.com/", "https://fastly.jsdelivr.net/gh/");
+  }
+  if (url.indexOf("cdn.jsdelivr.net") != -1) {
+    url.replace("cdn.jsdelivr.net", "fastly.jsdelivr.net");
   }
   if (url.indexOf("blocklist.bin") == -1) {
     if (url.endsWith("/")) url = url.substring(0, url.length() - 1);
