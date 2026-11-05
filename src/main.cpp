@@ -39,6 +39,7 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoOTA.h>
+#include "esp_ota_ops.h"
 #include "lwip/etharp.h"
 #include "lwip/netif.h"
 #include "secrets.h"
@@ -1209,6 +1210,7 @@ static void saveDhcpCfg() {
 // ---- setup / loop ----
 void setup() {
   Serial.begin(115200);
+  esp_ota_mark_app_valid_cancel_rollback();
   delay(300);
   LOGN("\n[c3-adblock] booting");
 
